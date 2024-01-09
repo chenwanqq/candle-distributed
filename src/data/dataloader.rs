@@ -18,6 +18,7 @@ impl DataLoader {
     }
 
     //TODO pub fn new_distributed
+    //TOD pub fn new_multiworkers()
 
     //TODO: add num_workers
     pub fn new<T>(dataset: T, batch_size: usize, shuffle: bool, drop_last: bool) -> Self

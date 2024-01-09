@@ -159,6 +159,6 @@ where
     }
 }
 
-//TODO: multi worker batch sampler or implement it in BatchSampler?
+//TODO: multi worker batch sampler
 
 //TODO: Distributed Sampler
