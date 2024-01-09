@@ -1,7 +1,7 @@
-use std::ops::{Index, IndexMut};
-pub trait Dataset: {
-    type Output;
-    fn len(&self) -> usize;
-    fn get(&self, index: usize) -> Self::Output;
-}
+use candle_core::Tensor;
 
+pub trait Dataset {
+    fn get(&self, index: usize) -> Vec<Tensor>;
+    fn output_tensor_num(&self) -> usize;
+    fn len(&self) -> usize;
+}
