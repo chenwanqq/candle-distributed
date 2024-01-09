@@ -8,6 +8,18 @@ pub struct DataLoader {
 }
 
 impl DataLoader {
+    pub fn from_sampler<S>(sampler: S) -> Self
+    where
+        S: Sampler + 'static,
+    {
+        Self {
+            sampler: Box::new(sampler),
+        }
+    }
+
+    //TODO pub fn new_distributed
+
+    //TODO: add num_workers
     pub fn new<T>(dataset: T, batch_size: usize, shuffle: bool, drop_last: bool) -> Self
     where
         T: Dataset + 'static,

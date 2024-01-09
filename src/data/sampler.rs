@@ -159,4 +159,6 @@ where
     }
 }
 
+//TODO: multi worker batch sampler
+
 //TODO: Distributed Sampler
