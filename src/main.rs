@@ -1,7 +1,8 @@
 use std::vec;
 
 use candle_core::Tensor;
-use data::{dataset::Dataset, sampler::BatchSampler};
+use data::dataset::Dataset;
+use data::dataloader::DataLoader;
 
 mod data;
 
@@ -40,7 +41,7 @@ fn main() {
         y,
         device: candle_core::Device::Cpu,
     };
-    let dataloader = data::dataloader::DataLoader::new(dataset, 3, true, true);
+    let dataloader = DataLoader::new(dataset, 3, true, true);
     for x in dataloader {
         println!("{:?}", x);
     }
