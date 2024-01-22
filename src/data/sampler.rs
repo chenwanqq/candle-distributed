@@ -255,6 +255,9 @@ where
 {
     type Item = Vec<Tensor>;
     fn next(&mut self) -> Option<Self::Item> {
+        if self.index  >= self.sampler.len() {
+            return None;
+        }
         if self.index + self.batch_size > self.sampler.len() && self.drop_last {
             return None;
         }
@@ -292,10 +295,56 @@ where
                 .unwrap()
             })
             .collect();
-        if (res.len() < self.batch_size && self.drop_last) || res.len() == 0 {
-            return None;
-        }
-        self.index += tmp.len();
+        self.index += self.batch_size;
+        println!("index: {}", self.index);
         Some(res)
+    }
+}
+
+pub struct PrefetchMultiWorkerBatchSampler<T>
+where
+    T: Sampler,
+{
+    sampler: T,
+    batch_size: usize,
+    drop_last: bool,
+    runtime: Runtime,
+    num_workers: usize,
+    index: usize,
+    prefetch_factor: usize,
+    prefetch_queue: Arc<RwLock<Vec<Vec<Tensor>>>>
+}
+
+impl<T> BatchSampler for PrefetchMultiWorkerBatchSampler<T>
+where
+    T: Sampler,
+{
+    fn output_tensor_num(&self) -> usize {
+        self.sampler.output_tensor_num()
+    }
+    fn reset(&mut self) {
+        self.sampler.reset();
+        self.index = 0;
+    }
+}
+
+impl<T> PrefetchMultiWorkerBatchSampler<T>
+where
+    T: Sampler,
+{
+    pub fn new(sampler: T, batch_size: usize, drop_last: bool, num_workers: usize) -> Self {
+        Self {
+            sampler,
+            batch_size,
+            drop_last,
+            runtime: runtime::Builder::new_multi_thread()
+                .worker_threads(num_workers)
+                .build()
+                .unwrap(),
+            num_workers,
+            index: 0,
+            prefetch_factor: 2,
+            prefetch_queue: Arc::new(RwLock::new(Vec::new()))
+        }
     }
 }

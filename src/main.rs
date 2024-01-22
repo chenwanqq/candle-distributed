@@ -54,8 +54,8 @@ fn main() {
     let mut dataloader = DataLoader::new_multi_worker(
         dataset,
         true,
-        2,
-        false,
+        3,
+        true,
         None,
         2,
     );
