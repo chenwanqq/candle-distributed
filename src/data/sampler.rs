@@ -5,7 +5,7 @@ use futures::FutureExt;
 use rand::{self, seq::SliceRandom, SeedableRng};
 use std::sync::Arc;
 use tokio::runtime::{self, Runtime};
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Mutex};
 
 pub trait Sampler: Iterator<Item = Vec<Tensor>> + Send + Sync + Clone + 'static {
     fn output_tensor_num(&self) -> usize;
@@ -312,7 +312,7 @@ where
     num_workers: usize,
     index: usize,
     prefetch_factor: usize,
-    prefetch_queue: Arc<RwLock<Vec<Vec<Tensor>>>>
+    prefetch_queue: Arc<Mutex<Vec<Vec<Tensor>>>>
 }
 
 impl<T> BatchSampler for PrefetchMultiWorkerBatchSampler<T>
@@ -333,18 +333,21 @@ where
     T: Sampler,
 {
     pub fn new(sampler: T, batch_size: usize, drop_last: bool, num_workers: usize) -> Self {
+        let mut runtime = runtime::Builder::new_multi_thread()
+            .worker_threads(num_workers)
+            .build()
+            .unwrap();
+        let prefetch_queue = Arc::new(Mutex::new(Vec::new()));
+        
         Self {
             sampler,
             batch_size,
             drop_last,
-            runtime: runtime::Builder::new_multi_thread()
-                .worker_threads(num_workers)
-                .build()
-                .unwrap(),
+            runtime: runtime,
             num_workers,
             index: 0,
             prefetch_factor: 2,
-            prefetch_queue: Arc::new(RwLock::new(Vec::new()))
+            prefetch_queue: prefetch_queue
         }
     }
 }
