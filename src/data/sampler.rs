@@ -1,7 +1,6 @@
 use super::dataset::Dataset;
 use candle_core::Tensor;
 use futures::future::join_all;
-use futures::FutureExt;
 use rand::{self, seq::SliceRandom, SeedableRng};
 use std::sync::Arc;
 use tokio::runtime::{self, Runtime};
@@ -274,7 +273,7 @@ where
                 sampler.get(i)
             }));
         }
-        let tmp = self.runtime.block_on(futures::future::join_all(futures));
+        let tmp = self.runtime.block_on(join_all(futures));
         let tmp = tmp
             .iter()
             .filter(|x| x.is_ok())
@@ -296,7 +295,6 @@ where
             })
             .collect();
         self.index += self.batch_size;
-        println!("index: {}", self.index);
         Some(res)
     }
 }
@@ -315,6 +313,7 @@ where
     prefetch_index: usize,
     prefetch_factor: usize,
     prefetch_queue: Arc<Mutex<Vec<Vec<Tensor>>>>,
+    futures: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl<T> BatchSampler for PrefetchMultiWorkerBatchSampler<T>
@@ -328,11 +327,34 @@ where
         })
     }
     fn reset(&mut self) {
-        self.runtime.block_on(async {
-            let mut s = self.sampler.write().await;
+        //TODO: kill all task  in runtime and reset multiple states
+        self.runtime.block_on(join_all(self.futures.drain(..)));
+        let sampler_lock = self.sampler.clone();
+        let prefetch_lock = self.prefetch_queue.clone();
+        self.runtime.block_on(async move {
+            let mut s = sampler_lock.write().await;
             s.reset();
+            let mut p = prefetch_lock.lock().await;
+            p.clear();
         });
         self.index = 0;
+        self.prefetch_index = 0;
+        //TODO: restart prefetch
+        let mut futures = Vec::new();
+        let mut prefetch_index = 0;
+        while prefetch_index < self.prefetch_factor * self.batch_size && prefetch_index < self.len {
+            let sampler_lock = self.sampler.clone();
+            let prefetch_lock = self.prefetch_queue.clone();
+            futures.push(self.runtime.spawn(async move {
+                let s = sampler_lock.read().await;
+                let v = s.get(prefetch_index);
+                let mut p = prefetch_lock.lock().await;
+                p.push(v.unwrap());
+            }));
+            prefetch_index += 1;
+        }
+        self.futures = futures;
+        self.prefetch_index = prefetch_index;
     }
 }
 
@@ -348,22 +370,23 @@ where
         prefetch_factor: usize,
     ) -> Self {
         let len = sampler.len();
-        let mut runtime = runtime::Builder::new_multi_thread()
+        let runtime = runtime::Builder::new_multi_thread()
             .worker_threads(num_workers)
             .build()
             .unwrap();
         let sampler = Arc::new(RwLock::new(sampler));
         let prefetch_queue = Arc::new(Mutex::new(Vec::new()));
+        let mut futures = Vec::new();
         let mut prefetch_index = 0;
         while prefetch_index < prefetch_factor * batch_size && prefetch_index < len {
             let sampler_lock = sampler.clone();
             let prefetch_lock = prefetch_queue.clone();
-            runtime.spawn(async move {
+            futures.push(runtime.spawn(async move {
                 let s = sampler_lock.read().await;
                 let v = s.get(prefetch_index);
-                let p = prefetch_lock.lock().await;
+                let mut p = prefetch_lock.lock().await;
                 p.push(v.unwrap());
-            });
+            }));
             prefetch_index += 1;
         }
         Self {
@@ -377,6 +400,7 @@ where
             prefetch_index,
             prefetch_factor,
             prefetch_queue: prefetch_queue,
+            futures,
         }
     }
 }
@@ -387,12 +411,49 @@ where
 {
     type Item = Vec<Tensor>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.len {
+        if self.index >= self.len || (self.index + self.batch_size > self.len && self.drop_last) {
             return None;
         }
-        if self.index + self.batch_size > self.len && self.drop_last {
-            return None;
+        let prefetch_lock = self.prefetch_queue.clone();
+        let batch_size = self.batch_size;
+        let tmp = self.runtime.block_on(async move {
+            loop {
+                let mut p = prefetch_lock.lock().await;
+                if p.len() > batch_size {
+                    let mut res = Vec::new();
+                    for _ in 0..batch_size {
+                        res.push(p.remove(0));
+                    }
+                    return res;
+                }
+            }
+        });
+        self.index += self.batch_size;
+        let mut prefetch_index = self.prefetch_index;
+        while prefetch_index < self.len
+            && prefetch_index < self.index + self.prefetch_factor * self.batch_size
+        {
+            let sampler_lock = self.sampler.clone();
+            let prefetch_lock = self.prefetch_queue.clone();
+            self.futures.push(self.runtime.spawn(async move {
+                let s = sampler_lock.read().await;
+                let v = s.get(prefetch_index);
+                let mut p = prefetch_lock.lock().await;
+                p.push(v.unwrap());
+            }));
+            prefetch_index += 1;
         }
-        
+        self.prefetch_index = prefetch_index;
+        let output_tensor_num = self.output_tensor_num();
+        let res: Vec<Tensor> = (0..output_tensor_num)
+            .map(|i| {
+                Tensor::stack(
+                    &tmp.iter().map(|x| x[i].clone()).collect::<Vec<Tensor>>(),
+                    0,
+                )
+                .unwrap()
+            })
+            .collect();
+        Some(res)
     }
 }
