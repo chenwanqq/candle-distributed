@@ -5,7 +5,7 @@ use futures::FutureExt;
 use rand::{self, seq::SliceRandom, SeedableRng};
 use std::sync::Arc;
 use tokio::runtime::{self, Runtime};
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock};
 
 pub trait Sampler: Iterator<Item = Vec<Tensor>> + Send + Sync + Clone + 'static {
     fn output_tensor_num(&self) -> usize;
@@ -255,7 +255,7 @@ where
 {
     type Item = Vec<Tensor>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index  >= self.sampler.len() {
+        if self.index >= self.sampler.len() {
             return None;
         }
         if self.index + self.batch_size > self.sampler.len() && self.drop_last {
@@ -305,14 +305,16 @@ pub struct PrefetchMultiWorkerBatchSampler<T>
 where
     T: Sampler,
 {
-    sampler: T,
+    sampler: Arc<RwLock<T>>,
     batch_size: usize,
     drop_last: bool,
     runtime: Runtime,
     num_workers: usize,
     index: usize,
+    len: usize,
+    prefetch_index: usize,
     prefetch_factor: usize,
-    prefetch_queue: Arc<Mutex<Vec<Vec<Tensor>>>>
+    prefetch_queue: Arc<Mutex<Vec<Vec<Tensor>>>>,
 }
 
 impl<T> BatchSampler for PrefetchMultiWorkerBatchSampler<T>
@@ -320,10 +322,16 @@ where
     T: Sampler,
 {
     fn output_tensor_num(&self) -> usize {
-        self.sampler.output_tensor_num()
+        self.runtime.block_on(async {
+            let s = self.sampler.read().await;
+            s.output_tensor_num()
+        })
     }
     fn reset(&mut self) {
-        self.sampler.reset();
+        self.runtime.block_on(async {
+            let mut s = self.sampler.write().await;
+            s.reset();
+        });
         self.index = 0;
     }
 }
@@ -332,13 +340,32 @@ impl<T> PrefetchMultiWorkerBatchSampler<T>
 where
     T: Sampler,
 {
-    pub fn new(sampler: T, batch_size: usize, drop_last: bool, num_workers: usize) -> Self {
+    pub fn new(
+        sampler: T,
+        batch_size: usize,
+        drop_last: bool,
+        num_workers: usize,
+        prefetch_factor: usize,
+    ) -> Self {
+        let len = sampler.len();
         let mut runtime = runtime::Builder::new_multi_thread()
             .worker_threads(num_workers)
             .build()
             .unwrap();
+        let sampler = Arc::new(RwLock::new(sampler));
         let prefetch_queue = Arc::new(Mutex::new(Vec::new()));
-        
+        let mut prefetch_index = 0;
+        while prefetch_index < prefetch_factor * batch_size && prefetch_index < len {
+            let sampler_lock = sampler.clone();
+            let prefetch_lock = prefetch_queue.clone();
+            runtime.spawn(async move {
+                let s = sampler_lock.read().await;
+                let v = s.get(prefetch_index);
+                let p = prefetch_lock.lock().await;
+                p.push(v.unwrap());
+            });
+            prefetch_index += 1;
+        }
         Self {
             sampler,
             batch_size,
@@ -346,8 +373,26 @@ where
             runtime: runtime,
             num_workers,
             index: 0,
-            prefetch_factor: 2,
-            prefetch_queue: prefetch_queue
+            len,
+            prefetch_index,
+            prefetch_factor,
+            prefetch_queue: prefetch_queue,
         }
+    }
+}
+
+impl<T> Iterator for PrefetchMultiWorkerBatchSampler<T>
+where
+    T: Sampler,
+{
+    type Item = Vec<Tensor>;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index >= self.len {
+            return None;
+        }
+        if self.index + self.batch_size > self.len && self.drop_last {
+            return None;
+        }
+        
     }
 }
