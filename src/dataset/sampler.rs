@@ -2,6 +2,7 @@ use super::dataset::Dataset;
 use candle_core::Tensor;
 use futures::future::join_all;
 use rand::{self, seq::SliceRandom, SeedableRng};
+use std::collections::BinaryHeap;
 use std::sync::Arc;
 use tokio::runtime::{self, Runtime};
 use tokio::sync::{Mutex, RwLock};
@@ -112,9 +113,10 @@ where
         };
         self.indexes.shuffle(&mut rng);
         self.index = 0;
+        self.epoch += 1;
     }
     fn get(&self, index: usize) -> Option<Vec<Tensor>> {
-        self.dataset.get(index)
+        self.dataset.get(self.indexes[index])
     }
     fn len(&self) -> usize {
         self.dataset.len()
@@ -273,7 +275,7 @@ where
                 sampler.get(i)
             }));
         }
-        let tmp = self.runtime.block_on(join_all(futures));
+        let tmp = self.runtime.block_on(join_all(futures));//join_all keeps order
         let tmp = tmp
             .iter()
             .filter(|x| x.is_ok())
@@ -299,6 +301,32 @@ where
     }
 }
 
+#[derive(Clone)]
+struct IndexedTensorVec {
+    pub tensors: Vec<Tensor>,
+    pub index: usize,
+}
+
+impl Ord for IndexedTensorVec {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        other.index.cmp(&self.index)
+    }
+}
+
+impl PartialOrd for IndexedTensorVec {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for IndexedTensorVec {
+    fn eq(&self, other: &Self) -> bool {
+        self.index == other.index
+    }
+}
+
+impl Eq for IndexedTensorVec {}
+
 pub struct PrefetchMultiWorkerBatchSampler<T>
 where
     T: Sampler,
@@ -312,7 +340,7 @@ where
     len: usize,
     prefetch_index: usize,
     prefetch_factor: usize,
-    prefetch_queue: Arc<Mutex<Vec<Vec<Tensor>>>>,
+    prefetch_queue: Arc<Mutex<BinaryHeap<IndexedTensorVec>>>,
     futures: Vec<tokio::task::JoinHandle<()>>,
 }
 
@@ -349,7 +377,11 @@ where
                 let s = sampler_lock.read().await;
                 let v = s.get(prefetch_index);
                 let mut p = prefetch_lock.lock().await;
-                p.push(v.unwrap());
+                let future_result = IndexedTensorVec {
+                    tensors: v.unwrap(),
+                    index: prefetch_index,
+                };
+                p.push(future_result);
             }));
             prefetch_index += 1;
         }
@@ -376,7 +408,7 @@ where
             .build()
             .unwrap();
         let sampler = Arc::new(RwLock::new(sampler));
-        let prefetch_queue = Arc::new(Mutex::new(Vec::new()));
+        let prefetch_queue = Arc::new(Mutex::new(BinaryHeap::new()));
         let mut futures = Vec::new();
         let mut prefetch_index = 0;
         while prefetch_index < prefetch_factor * batch_size && prefetch_index < len {
@@ -386,7 +418,11 @@ where
                 let s = sampler_lock.read().await;
                 let v = s.get(prefetch_index);
                 let mut p = prefetch_lock.lock().await;
-                p.push(v.unwrap());
+                let future_result = IndexedTensorVec {
+                    tensors: v.unwrap(),
+                    index: prefetch_index,
+                };
+                p.push(future_result);
             }));
             prefetch_index += 1;
         }
@@ -423,7 +459,8 @@ where
                 if p.len() >= this_batch_size {
                     let mut res = Vec::new();
                     for _ in 0..this_batch_size {
-                        res.push(p.remove(0));
+                        let indexed_tensor_vec = p.pop().unwrap();
+                        res.push(indexed_tensor_vec.tensors);
                     }
                     return res;
                 }
@@ -440,7 +477,11 @@ where
                 let s = sampler_lock.read().await;
                 let v = s.get(prefetch_index);
                 let mut p = prefetch_lock.lock().await;
-                p.push(v.unwrap());
+                let future_result = IndexedTensorVec {
+                    tensors: v.unwrap(),
+                    index: prefetch_index,
+                };
+                p.push(future_result);
             }));
             prefetch_index += 1;
         }
