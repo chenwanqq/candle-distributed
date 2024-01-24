@@ -39,43 +39,48 @@ impl DataLoader {
         drop_last: bool,
         seed: Option<u64>,
         num_workers: usize,
+        prefetch_factor: Option<usize>,
     ) -> Self {
         if shuffle {
             let sampler = RandomSampler::new(dataset, seed);
-            /*
-            let batch_sampler = super::sampler::MultiWorkerBatchSampler::new(
-                sampler,
-                batch_size,
-                drop_last,
-                num_workers,
-            );
-            */
-            let batch_sampler = super::sampler::PrefetchMultiWorkerBatchSampler::new(
-                sampler,
-                batch_size,
-                drop_last,
-                num_workers,
-                2
-            );
-            Self::new(Box::new(batch_sampler))
+            if let Some(prefetch_factor) = prefetch_factor {
+                let batch_sampler = super::sampler::PrefetchMultiWorkerBatchSampler::new(
+                    sampler,
+                    batch_size,
+                    drop_last,
+                    num_workers,
+                    2
+                );
+                Self::new(Box::new(batch_sampler))
+            } else {
+                let batch_sampler = super::sampler::MultiWorkerBatchSampler::new(
+                    sampler,
+                    batch_size,
+                    drop_last,
+                    num_workers,
+                );
+                Self::new(Box::new(batch_sampler))
+            }
         } else {
             let sampler = super::sampler::SequentialSampler::new(dataset);
-            /*
-            let batch_sampler = super::sampler::MultiWorkerBatchSampler::new(
-                sampler,
-                batch_size,
-                drop_last,
-                num_workers,
-            );
-            */
-            let batch_sampler = super::sampler::PrefetchMultiWorkerBatchSampler::new(
-                sampler,
-                batch_size,
-                drop_last,
-                num_workers,
-                2
-            );
-            Self::new(Box::new(batch_sampler))
+            if let Some(prefetch_factor) = prefetch_factor {
+                let batch_sampler = super::sampler::PrefetchMultiWorkerBatchSampler::new(
+                    sampler,
+                    batch_size,
+                    drop_last,
+                    num_workers,
+                    2
+                );
+                Self::new(Box::new(batch_sampler))
+            } else {
+                let batch_sampler = super::sampler::MultiWorkerBatchSampler::new(
+                    sampler,
+                    batch_size,
+                    drop_last,
+                    num_workers,
+                );
+                Self::new(Box::new(batch_sampler))
+            }
         }
     }
 

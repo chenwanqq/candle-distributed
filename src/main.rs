@@ -1,12 +1,12 @@
 use std::vec;
 
 use candle_core::Tensor;
-use data::{dataset::Dataset, sampler::{SingleWorkerBatchSampler, MultiWorkerBatchSampler}};
+use dataset::{dataset::Dataset, sampler::{SingleWorkerBatchSampler, MultiWorkerBatchSampler}};
 
-use crate::data::sampler::BatchSampler;
-use data::dataloader::DataLoader;
+use crate::dataset::sampler::BatchSampler;
+use dataset::dataloader::DataLoader;
 
-mod data;
+mod dataset;
 
 
 #[derive(Clone)]
@@ -55,9 +55,10 @@ fn main() {
         dataset,
         true,
         3,
-        true,
+        false,
         None,
         2,
+        Some(2),
     );
     
     for epoch in 0..2 {

@@ -372,6 +372,7 @@ where
         let len = sampler.len();
         let runtime = runtime::Builder::new_multi_thread()
             .worker_threads(num_workers)
+            .enable_time()
             .build()
             .unwrap();
         let sampler = Arc::new(RwLock::new(sampler));
@@ -415,13 +416,13 @@ where
             return None;
         }
         let prefetch_lock = self.prefetch_queue.clone();
-        let batch_size = self.batch_size;
+        let this_batch_size = std::cmp::min(self.batch_size, self.len - self.index);
         let tmp = self.runtime.block_on(async move {
             loop {
                 let mut p = prefetch_lock.lock().await;
-                if p.len() > batch_size {
+                if p.len() >= this_batch_size {
                     let mut res = Vec::new();
-                    for _ in 0..batch_size {
+                    for _ in 0..this_batch_size {
                         res.push(p.remove(0));
                     }
                     return res;
