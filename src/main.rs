@@ -1,13 +1,15 @@
 use std::vec;
 
 use candle_core::Tensor;
-use dataset::{dataset::Dataset, sampler::{SingleWorkerBatchSampler, MultiWorkerBatchSampler}};
+use dataset::{
+    dataset::Dataset,
+    sampler::{MultiWorkerBatchSampler, SingleWorkerBatchSampler},
+};
 
 use crate::dataset::sampler::BatchSampler;
 use dataset::dataloader::DataLoader;
 
 mod dataset;
-
 
 #[derive(Clone)]
 struct TestDataset {
@@ -37,9 +39,7 @@ impl Dataset for TestDataset {
     }
 }
 
-
 fn main() {
-    
     let mut y = vec![[0 as u8; 2]; 10];
     for i in 0..10 {
         y[i][0] = i as u8;
@@ -51,16 +51,8 @@ fn main() {
         device: candle_core::Device::Cpu,
     };
 
-    let mut dataloader = DataLoader::new_multi_worker(
-        dataset,
-        true,
-        3,
-        false,
-        None,
-        2,
-        Some(2),
-    );
-    
+    let mut dataloader = DataLoader::new_multi_worker(dataset, true, 3, false, None, 2, Some(2));
+
     for epoch in 0..2 {
         println!("epoch: {}", epoch);
         for (i, batch) in dataloader.by_ref().enumerate() {

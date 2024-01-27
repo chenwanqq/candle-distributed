@@ -49,7 +49,7 @@ impl DataLoader {
                     batch_size,
                     drop_last,
                     num_workers,
-                    prefetch_factor
+                    prefetch_factor,
                 );
                 Self::new(Box::new(batch_sampler))
             } else {
@@ -69,7 +69,7 @@ impl DataLoader {
                     batch_size,
                     drop_last,
                     num_workers,
-                    prefetch_factor
+                    prefetch_factor,
                 );
                 Self::new(Box::new(batch_sampler))
             } else {
@@ -103,4 +103,3 @@ impl Iterator for DataLoader {
         self.batch_sampler.next()
     }
 }
-

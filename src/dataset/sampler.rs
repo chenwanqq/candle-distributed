@@ -290,7 +290,7 @@ where
                 sampler.get(i)
             }));
         }
-        let tmp = self.runtime.block_on(join_all(futures));//join_all keeps order
+        let tmp = self.runtime.block_on(join_all(futures)); //join_all keeps order
         let tmp = tmp
             .iter()
             .filter(|x| x.is_ok())
@@ -385,7 +385,9 @@ where
         //TODO: restart prefetch
         let mut futures = Vec::new();
         let mut prefetch_index = 0;
-        while prefetch_index < self.prefetch_factor * self.batch_size && prefetch_index < self.sample_nums {
+        while prefetch_index < self.prefetch_factor * self.batch_size
+            && prefetch_index < self.sample_nums
+        {
             let sampler_lock = self.sampler.clone();
             let prefetch_lock = self.prefetch_queue.clone();
             futures.push(self.runtime.spawn(async move {
@@ -470,7 +472,9 @@ where
 {
     type Item = Vec<Tensor>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.sample_nums || (self.index + self.batch_size > self.sample_nums && self.drop_last) {
+        if self.index >= self.sample_nums
+            || (self.index + self.batch_size > self.sample_nums && self.drop_last)
+        {
             return None;
         }
         let prefetch_lock = self.prefetch_queue.clone();

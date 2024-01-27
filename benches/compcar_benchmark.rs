@@ -21,7 +21,7 @@ impl CompCarDataset {
         let image_path_list: Vec<String> = content_lines
             .iter()
             .filter(|x| !x.is_empty())
-            .map(|x| format!("{}/image/{}", dataset_root,x))
+            .map(|x| format!("{}/image/{}", dataset_root, x))
             .collect();
         println!("start loading labels");
         let pb = ProgressBar::new(image_path_list.len() as u64);
@@ -87,26 +87,23 @@ fn single_worker_benches() {
     let dataset_root = "/home/chenwanqq/candle-distributed/datasets/compcars".to_string();
     let dataset = CompCarDataset::new(dataset_root, "train".to_string());
     println!("dataset len: {}", dataset.len());
-    let mut single_worker_dataloader = candle_distributed::dataset::dataloader::DataLoader::new_single_worker(
-        dataset,
-        true,
-        64,
-        false,
-        None,
-    );
+    let mut single_worker_dataloader =
+        candle_distributed::dataset::dataloader::DataLoader::new_single_worker(
+            dataset, true, 64, false, None,
+        );
     for epoches in 0..1 {
         println!("epoch: {}", epoches);
         let pb = ProgressBar::new(single_worker_dataloader.len() as u64);
         let start_time = std::time::Instant::now();
         let mut batch_time_0 = std::time::Instant::now();
         for (i, batch) in single_worker_dataloader.by_ref().enumerate() {
-            let x = batch[0].permute((0,3,1,2)).unwrap();//NCHW
+            let x = batch[0].permute((0, 3, 1, 2)).unwrap(); //NCHW
             let y = batch[1].to_vec2::<u8>().unwrap();
             //sleep a while to simulate training
             std::thread::sleep(std::time::Duration::from_millis(200));
             pb.inc(1);
             let batch_time_1 = std::time::Instant::now();
-            println!("batch time: {:?}",batch_time_1-batch_time_0);
+            println!("batch time: {:?}", batch_time_1 - batch_time_0);
             batch_time_0 = batch_time_1;
         }
         let end_time = std::time::Instant::now();
@@ -120,28 +117,29 @@ fn multi_worker_benches() {
     let dataset_root = "/home/chenwanqq/candle-distributed/datasets/compcars".to_string();
     let dataset = CompCarDataset::new(dataset_root, "train".to_string());
     println!("dataset len: {}", dataset.len());
-    let mut single_worker_dataloader = candle_distributed::dataset::dataloader::DataLoader::new_multi_worker(
-        dataset,
-        true,
-        64,
-        false,
-        None,
-        8,
-        Some(2),
-    );
+    let mut single_worker_dataloader =
+        candle_distributed::dataset::dataloader::DataLoader::new_multi_worker(
+            dataset,
+            true,
+            64,
+            false,
+            None,
+            8,
+            Some(2),
+        );
     for epoches in 0..1 {
         println!("epoch: {}", epoches);
         let pb = ProgressBar::new(single_worker_dataloader.len() as u64);
         let start_time = std::time::Instant::now();
         let mut batch_time_0 = std::time::Instant::now();
         for (i, batch) in single_worker_dataloader.by_ref().enumerate() {
-            let x = batch[0].permute((0,3,1,2)).unwrap();//NCHW
+            let x = batch[0].permute((0, 3, 1, 2)).unwrap(); //NCHW
             let y = batch[1].to_vec2::<u8>().unwrap();
             //sleep a while to simulate training
             std::thread::sleep(std::time::Duration::from_millis(200));
             pb.inc(1);
             let batch_time_1 = std::time::Instant::now();
-            println!("batch time: {:?}",batch_time_1-batch_time_0);
+            println!("batch time: {:?}", batch_time_1 - batch_time_0);
             batch_time_0 = batch_time_1;
         }
         let end_time = std::time::Instant::now();
