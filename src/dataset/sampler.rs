@@ -141,6 +141,7 @@ where
 pub trait BatchSampler: Iterator<Item = Vec<Tensor>> {
     fn output_tensor_num(&self) -> usize;
     fn reset(&mut self);
+    fn len(&mut self) -> usize;
 }
 
 /// SingleWorkerBatchSampler
@@ -176,6 +177,13 @@ where
     }
     fn reset(&mut self) {
         self.sampler.reset();
+    }
+    fn len(&mut self) -> usize {
+        if self.drop_last {
+            self.sampler.len() / self.batch_size
+        } else {
+            (self.sampler.len() + self.batch_size - 1) / self.batch_size
+        }
     }
 }
 impl<T> Iterator for SingleWorkerBatchSampler<T>
@@ -247,6 +255,13 @@ where
     fn reset(&mut self) {
         self.sampler.reset();
         self.index = 0;
+    }
+    fn len(&mut self) -> usize {
+        if self.drop_last {
+            self.sampler.len() / self.batch_size
+        } else {
+            (self.sampler.len() + self.batch_size - 1) / self.batch_size
+        }
     }
 }
 
@@ -337,7 +352,7 @@ where
     runtime: Runtime,
     num_workers: usize,
     index: usize,
-    len: usize,
+    sample_nums: usize,
     prefetch_index: usize,
     prefetch_factor: usize,
     prefetch_queue: Arc<Mutex<BinaryHeap<IndexedTensorVec>>>,
@@ -370,7 +385,7 @@ where
         //TODO: restart prefetch
         let mut futures = Vec::new();
         let mut prefetch_index = 0;
-        while prefetch_index < self.prefetch_factor * self.batch_size && prefetch_index < self.len {
+        while prefetch_index < self.prefetch_factor * self.batch_size && prefetch_index < self.sample_nums {
             let sampler_lock = self.sampler.clone();
             let prefetch_lock = self.prefetch_queue.clone();
             futures.push(self.runtime.spawn(async move {
@@ -388,6 +403,13 @@ where
         self.futures = futures;
         self.prefetch_index = prefetch_index;
     }
+    fn len(&mut self) -> usize {
+        if self.drop_last {
+            self.sample_nums / self.batch_size
+        } else {
+            (self.sample_nums + self.batch_size - 1) / self.batch_size
+        }
+    }
 }
 
 impl<T> PrefetchMultiWorkerBatchSampler<T>
@@ -401,7 +423,7 @@ where
         num_workers: usize,
         prefetch_factor: usize,
     ) -> Self {
-        let len = sampler.len();
+        let sample_nums = sampler.len();
         let runtime = runtime::Builder::new_multi_thread()
             .worker_threads(num_workers)
             .enable_time()
@@ -411,7 +433,7 @@ where
         let prefetch_queue = Arc::new(Mutex::new(BinaryHeap::new()));
         let mut futures = Vec::new();
         let mut prefetch_index = 0;
-        while prefetch_index < prefetch_factor * batch_size && prefetch_index < len {
+        while prefetch_index < prefetch_factor * batch_size && prefetch_index < sample_nums {
             let sampler_lock = sampler.clone();
             let prefetch_lock = prefetch_queue.clone();
             futures.push(runtime.spawn(async move {
@@ -433,7 +455,7 @@ where
             runtime: runtime,
             num_workers,
             index: 0,
-            len,
+            sample_nums,
             prefetch_index,
             prefetch_factor,
             prefetch_queue: prefetch_queue,
@@ -448,11 +470,11 @@ where
 {
     type Item = Vec<Tensor>;
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index >= self.len || (self.index + self.batch_size > self.len && self.drop_last) {
+        if self.index >= self.sample_nums || (self.index + self.batch_size > self.sample_nums && self.drop_last) {
             return None;
         }
         let prefetch_lock = self.prefetch_queue.clone();
-        let this_batch_size = std::cmp::min(self.batch_size, self.len - self.index);
+        let this_batch_size = std::cmp::min(self.batch_size, self.sample_nums - self.index);
         let tmp = self.runtime.block_on(async move {
             loop {
                 let mut p = prefetch_lock.lock().await;
@@ -468,7 +490,7 @@ where
         });
         self.index += self.batch_size;
         let mut prefetch_index = self.prefetch_index;
-        while prefetch_index < self.len
+        while prefetch_index < self.sample_nums
             && prefetch_index < self.index + self.prefetch_factor * self.batch_size
         {
             let sampler_lock = self.sampler.clone();

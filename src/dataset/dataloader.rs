@@ -91,6 +91,10 @@ impl DataLoader {
     pub fn reset(&mut self) {
         self.batch_sampler.reset();
     }
+
+    pub fn len(&mut self) -> usize {
+        self.batch_sampler.len()
+    }
 }
 
 impl Iterator for DataLoader {

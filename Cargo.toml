@@ -11,3 +11,23 @@ candle-nn = { git = "https://github.com/huggingface/candle.git", version = "0.3.
 rand = "0.8.5"
 tokio = { version = "1", features = ["full"] }
 futures = "*"
+image = "*"
+indicatif = "*"
+
+[dev-dependencies]
+criterion = "*"
+
+[profile.bench]
+opt-level = 3
+debug = false
+rpath = false
+lto = false
+debug-assertions = false
+codegen-units = 16
+panic = 'unwind'
+incremental = false
+overflow-checks = false
+
+[[bench]]
+name = "compcar_benchmark"
+harness = false
