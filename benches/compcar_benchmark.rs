@@ -69,17 +69,18 @@ impl Dataset for CompCarDataset {
             candle_core::DType::U8,
             &[224, 224, 3],
             &candle_core::Device::Cpu,
-        );
+        )
+        .unwrap()
+        .permute((2, 0, 1))
+        .unwrap();
         let label_tensor = candle_core::Tensor::from_raw_buffer(
             &[self.label_list[index]],
             candle_core::DType::U8,
             &[1],
             &candle_core::Device::Cpu,
-        );
-        if image_tensor.is_err() || label_tensor.is_err() {
-            return None;
-        }
-        Some(vec![image_tensor.unwrap(), label_tensor.unwrap()])
+        )
+        .unwrap();
+        Some(vec![image_tensor, label_tensor])
     }
 }
 
@@ -97,8 +98,8 @@ fn single_worker_benches() {
         let start_time = std::time::Instant::now();
         let mut batch_time_0 = std::time::Instant::now();
         for (i, batch) in single_worker_dataloader.by_ref().enumerate() {
-            let x = batch[0].permute((0, 3, 1, 2)).unwrap(); //NCHW
-            let y = batch[1].to_vec2::<u8>().unwrap();
+            let x = &batch[0];
+            let y = &batch[1];
             //sleep a while to simulate training
             std::thread::sleep(std::time::Duration::from_millis(200));
             pb.inc(1);
@@ -133,8 +134,8 @@ fn multi_worker_benches() {
         let start_time = std::time::Instant::now();
         let mut batch_time_0 = std::time::Instant::now();
         for (i, batch) in single_worker_dataloader.by_ref().enumerate() {
-            let x = batch[0].permute((0, 3, 1, 2)).unwrap(); //NCHW
-            let y = batch[1].to_vec2::<u8>().unwrap();
+            let x = &batch[0];
+            let y = &batch[1];
             //sleep a while to simulate training
             std::thread::sleep(std::time::Duration::from_millis(200));
             pb.inc(1);
