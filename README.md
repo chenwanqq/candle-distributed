@@ -6,11 +6,12 @@ This is a distributed deep learning framework based on [candle](https://github.c
 
 ## TODO
 
-- multi worker detail: prefetch and gpu
-- test of multi worker dataloader. use this dataloder to train a model
+- [x] multi worker detail: prefetch
+- [x] test of multi worker dataloader. use this dataloder to train a model
 - distributed dataset, dataloader and sampler like torch
-- parameter server
-- ring all-reduce
+- [] things related to GPU
+- [] parameter server
+- [] ring all-reduce
 
 
 ## ROADMAP
