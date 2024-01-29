@@ -1,11 +1,6 @@
-use std::sync::Arc;
-
 use super::dataset::Dataset;
 use candle_core::Tensor;
-use futures::future::join_all;
 use rand::{self, seq::SliceRandom, SeedableRng};
-use tokio::runtime::{self, Runtime};
-use tokio::sync::{mpsc, RwLock};
 
 pub trait Sampler: Iterator<Item = Vec<Tensor>> + Send + Sync + Clone + 'static {
     fn output_tensor_num(&self) -> usize;
