@@ -1,15 +1,10 @@
 use std::vec;
+mod data_utils;
 
 use candle_core::Tensor;
-use dataset::{
-    dataset::Dataset,
-    sampler::{MultiWorkerBatchSampler, SingleWorkerBatchSampler},
-};
+use data_utils::dataset::Dataset;
 
-use crate::dataset::sampler::BatchSampler;
-use dataset::dataloader::DataLoader;
-
-mod dataset;
+use data_utils::dataloader::DataLoader;
 
 #[derive(Clone)]
 struct TestDataset {
@@ -35,15 +30,15 @@ impl Dataset for TestDataset {
         2
     }
     fn len(&self) -> usize {
-        return self.x.len();
+        self.x.len()
     }
 }
 
 fn main() {
-    let mut y = vec![[0 as u8; 2]; 10];
-    for i in 0..10 {
-        y[i][0] = i as u8;
-        y[i][1] = 9 - i as u8;
+    let mut y = vec![[0_u8; 2]; 10];
+    for (i, item) in y.iter_mut().enumerate().take(10) {
+        item[0] = i as u8;
+        item[1] = 9 - i as u8;
     }
     let dataset = TestDataset {
         x: vec![[0; 256]; 10],

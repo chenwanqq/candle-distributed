@@ -2,8 +2,8 @@
 mod tests {
     use candle_core::Tensor;
 
-    use crate::dataset::dataloader::DataLoader;
-    use crate::dataset::dataset::Dataset;
+    use crate::data_utils::dataloader::DataLoader;
+    use crate::data_utils::dataset::Dataset;
     #[derive(Clone)]
     struct TestDataset {
         x: Vec<[u8; 256]>,

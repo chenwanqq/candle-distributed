@@ -92,8 +92,12 @@ impl DataLoader {
         self.batch_sampler.reset();
     }
 
-    pub fn len(&mut self) -> usize {
+    pub fn len(&self) -> usize {
         self.batch_sampler.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.batch_sampler.is_empty()
     }
 }
 

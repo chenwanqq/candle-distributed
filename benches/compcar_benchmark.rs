@@ -1,4 +1,4 @@
-use candle_distributed::dataset::dataset::Dataset;
+use candle_distributed::data_utils::dataset::Dataset;
 use criterion::criterion_main;
 use indicatif::ProgressBar;
 
@@ -70,8 +70,6 @@ impl Dataset for CompCarDataset {
             &[224, 224, 3],
             &candle_core::Device::Cpu,
         )
-        .unwrap()
-        .permute((2, 0, 1))
         .unwrap();
         let label_tensor = candle_core::Tensor::from_raw_buffer(
             &[self.label_list[index]],
@@ -89,7 +87,7 @@ fn single_worker_benches() {
     let dataset = CompCarDataset::new(dataset_root, "train".to_string());
     println!("dataset len: {}", dataset.len());
     let mut single_worker_dataloader =
-        candle_distributed::dataset::dataloader::DataLoader::new_single_worker(
+        candle_distributed::data_utils::dataloader::DataLoader::new_single_worker(
             dataset, true, 64, false, None,
         );
     for epoches in 0..1 {
@@ -98,7 +96,7 @@ fn single_worker_benches() {
         let start_time = std::time::Instant::now();
         let mut batch_time_0 = std::time::Instant::now();
         for (i, batch) in single_worker_dataloader.by_ref().enumerate() {
-            let x = &batch[0];
+            let x = batch[0].permute((0, 3, 1, 2)).unwrap();
             let y = &batch[1];
             //sleep a while to simulate training
             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -119,7 +117,7 @@ fn multi_worker_benches() {
     let dataset = CompCarDataset::new(dataset_root, "train".to_string());
     println!("dataset len: {}", dataset.len());
     let mut single_worker_dataloader =
-        candle_distributed::dataset::dataloader::DataLoader::new_multi_worker(
+        candle_distributed::data_utils::dataloader::DataLoader::new_multi_worker(
             dataset,
             true,
             64,
@@ -128,7 +126,7 @@ fn multi_worker_benches() {
             8,
             Some(2),
         );
-    for epoches in 0..1 {
+    for epoches in 0..2 {
         println!("epoch: {}", epoches);
         let pb = ProgressBar::new(single_worker_dataloader.len() as u64);
         let start_time = std::time::Instant::now();
