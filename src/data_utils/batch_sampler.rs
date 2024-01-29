@@ -1,7 +1,7 @@
 use std::{collections::BinaryHeap, sync::Arc};
 
 use candle_core::Tensor;
-use futures::future::join_all;
+use futures::future::{join, join_all};
 use tokio::{
     runtime::{self, Runtime},
     sync::{Mutex, RwLock},
@@ -242,11 +242,19 @@ where
     }
     fn reset(&mut self) {
         //TODO: kill all task  in runtime and reset multiple states
-        self.runtime.block_on(join_all(self.futures.drain(..)));
+        self.runtime.block_on(async {
+            for future in self.futures.iter_mut() {
+                future.abort();
+            }
+            join_all(self.futures.drain(..)).await;
+        });
         self.futures.clear();
         let sampler_lock = self.sampler.clone();
+        let prefetch_queue_lock = self.prefetch_queue.clone();
         self.runtime.block_on(async move {
             let mut s = sampler_lock.write().await;
+            let mut q = prefetch_queue_lock.lock().await;
+            q.clear();
             s.reset();
         });
         self.index = 0;
