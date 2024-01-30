@@ -45,6 +45,29 @@ impl CompCarDataset {
     }
 }
 
+fn image_normalization(
+    image_tensor: &candle_core::Tensor,
+) -> Result<candle_core::Tensor, candle_core::Error> {
+    const IMAGE_NET_STD: [f32; 3] = [0.229, 0.224, 0.225];
+    const IMAGE_NET_MEAN: [f32; 3] = [0.485, 0.456, 0.406];
+    image_tensor
+        .broadcast_div(&candle_core::Tensor::from_vec(
+            vec![255 as f32, 255 as f32, 255 as f32],
+            &[1, 1, 3],
+            &candle_core::Device::Cpu,
+        )?)?
+        .broadcast_sub(&candle_core::Tensor::from_vec(
+            IMAGE_NET_MEAN.to_vec(),
+            &[1, 1, 3],
+            &candle_core::Device::Cpu,
+        )?)?
+        .broadcast_div(&candle_core::Tensor::from_vec(
+            IMAGE_NET_STD.to_vec(),
+            &[1, 1, 3],
+            &candle_core::Device::Cpu,
+        )?)
+}
+
 impl Dataset for CompCarDataset {
     fn output_tensor_num(&self) -> usize {
         2
@@ -56,6 +79,7 @@ impl Dataset for CompCarDataset {
 
     fn get(&self, index: usize) -> Option<Vec<candle_core::Tensor>> {
         //TODO: replace with image2, to provide normalization and f32
+
         let image_path = &self.image_path_list[index];
         let image = image::open(image_path);
         if image.is_err() {
@@ -64,13 +88,17 @@ impl Dataset for CompCarDataset {
         let image = image.unwrap();
         let image = image.resize_exact(224, 224, image::imageops::FilterType::Nearest);
         let image = image.to_rgb8();
+
         let image_tensor = candle_core::Tensor::from_raw_buffer(
             image.as_raw(),
             candle_core::DType::U8,
             &[224, 224, 3],
             &candle_core::Device::Cpu,
         )
+        .unwrap()
+        .to_dtype(candle_core::DType::F32)
         .unwrap();
+        let image_tensor = image_normalization(&image_tensor).unwrap();
         let label_tensor = candle_core::Tensor::from_raw_buffer(
             &[self.label_list[index]],
             candle_core::DType::U8,
@@ -90,7 +118,7 @@ fn single_worker_benches() {
         candle_distributed::data_utils::dataloader::DataLoader::new_single_worker(
             dataset, true, 64, false, None,
         );
-    for epoches in 0..1 {
+    for epoches in 0..2 {
         println!("epoch: {}", epoches);
         let pb = ProgressBar::new(single_worker_dataloader.len() as u64);
         let start_time = std::time::Instant::now();
@@ -113,7 +141,7 @@ fn single_worker_benches() {
 }
 
 fn multi_worker_benches() {
-    let dataset_root = "/home/chenwanqq/candle-distributed/datasets/compcars".to_string();
+    let dataset_root = "/../datasets/compcars".to_string();
     let dataset = CompCarDataset::new(dataset_root, "train".to_string());
     println!("dataset len: {}", dataset.len());
     let mut single_worker_dataloader =
@@ -126,6 +154,8 @@ fn multi_worker_benches() {
             8,
             Some(2),
         );
+    let weight_path = "../weights/resnet18.safetensors".to_string();
+    
     for epoches in 0..2 {
         println!("epoch: {}", epoches);
         let pb = ProgressBar::new(single_worker_dataloader.len() as u64);
@@ -135,7 +165,7 @@ fn multi_worker_benches() {
             let x = &batch[0];
             let y = &batch[1];
             //sleep a while to simulate training
-            std::thread::sleep(std::time::Duration::from_millis(200));
+            std::thread::sleep(std::time::Duration::from_millis(500));
             pb.inc(1);
             let batch_time_1 = std::time::Instant::now();
             println!("batch time: {:?}", batch_time_1 - batch_time_0);

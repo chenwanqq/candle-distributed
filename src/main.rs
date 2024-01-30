@@ -19,7 +19,7 @@ impl Dataset for TestDataset {
             return None;
         }
         let tensor0 =
-            Tensor::from_raw_buffer(&self.x[index], candle_core::DType::U8, &[256], &self.device)
+            Tensor::from_raw_buffer(&self.x[index], candle_core::DType::F32, &[256], &self.device)
                 .unwrap();
         let tensor1 =
             Tensor::from_raw_buffer(&self.y[index], candle_core::DType::U8, &[2], &self.device)
