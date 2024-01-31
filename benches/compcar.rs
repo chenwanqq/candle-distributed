@@ -1,6 +1,10 @@
+use candle_core::Module;
 use candle_distributed::data_utils::dataset::Dataset;
+use candle_nn::{var_builder::SimpleBackend, Func, Optimizer, VarBuilder, VarMap};
+use candle_transformers::models::resnet;
 use criterion::criterion_main;
 use indicatif::ProgressBar;
+use std::path::Path;
 
 //5 class, 1,2,3,4,5
 #[derive(Clone)]
@@ -33,7 +37,7 @@ impl CompCarDataset {
                 let label_content = std::fs::read_to_string(label_path).unwrap();
                 let label_str: String = label_content.lines().take(1).collect();
                 pb.inc(1);
-                label_str.parse::<u8>().unwrap()
+                label_str.parse::<u8>().unwrap()-1
             })
             .collect();
         pb.finish_with_message("load label done");
@@ -105,6 +109,8 @@ impl Dataset for CompCarDataset {
             &[1],
             &candle_core::Device::Cpu,
         )
+        .unwrap()
+        .to_dtype(candle_core::DType::U32)
         .unwrap();
         Some(vec![image_tensor, label_tensor])
     }
@@ -140,46 +146,92 @@ fn single_worker_benches() {
     }
 }
 
-fn multi_worker_benches() {
-    let dataset_root = "/../datasets/compcars".to_string();
+struct TrainingArgs {
+    learning_rate: f64,
+    batch_size: usize,
+    epochs: usize,
+}
+
+fn multi_worker_benches(args: &TrainingArgs) {
+    let device = candle_core::Device::new_cuda(0).unwrap();
+    //create dataset
+    let dataset_root = "./datasets/compcars".to_string();
     let dataset = CompCarDataset::new(dataset_root, "train".to_string());
     println!("dataset len: {}", dataset.len());
-    let mut single_worker_dataloader =
-        candle_distributed::data_utils::dataloader::DataLoader::new_multi_worker(
-            dataset,
-            true,
-            64,
-            false,
-            None,
-            8,
-            Some(2),
-        );
-    let weight_path = "../weights/resnet18.safetensors".to_string();
-    
-    for epoches in 0..2 {
+    let mut dataloader = candle_distributed::data_utils::dataloader::DataLoader::new_multi_worker(
+        dataset,
+        true,
+        args.batch_size,
+        false,
+        None,
+        8,
+        Some(2),
+    );
+    // create model
+    let weight_path = Path::new("./weights/resnet18.safetensors");
+    let mut weights = candle_core::safetensors::load(weight_path, &device).unwrap();
+    let mut varmap = VarMap::new();
+    for (k, v) in weights.iter() {
+        varmap.set_one(k.to_string(), v);
+    }
+    let vb = VarBuilder::from_varmap(&varmap, candle_core::DType::F32, &device);
+    let model = resnet::resnet18(5, vb).unwrap();
+
+    // create optimizer
+    let adamw_params = candle_nn::ParamsAdamW {
+        lr: args.learning_rate,
+        ..Default::default()
+    };
+    let mut optimizer = candle_nn::AdamW::new(varmap.all_vars(), adamw_params).unwrap();
+
+    // training loop
+    for epoches in 0..args.epochs {
         println!("epoch: {}", epoches);
-        let pb = ProgressBar::new(single_worker_dataloader.len() as u64);
+        let pb = ProgressBar::new(dataloader.len() as u64);
         let start_time = std::time::Instant::now();
         let mut batch_time_0 = std::time::Instant::now();
-        for (i, batch) in single_worker_dataloader.by_ref().enumerate() {
-            let x = &batch[0];
-            let y = &batch[1];
-            //sleep a while to simulate training
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            pb.inc(1);
+        let mut sum_loss = 0f32;
+        for (i, batch) in dataloader.by_ref().enumerate() {
+            let x = &batch[0].permute((0, 3, 1, 2)).unwrap().to_device(&device).unwrap();
+            let batch_len = x.shape().dims()[0];
+            println!("batch len: {}", batch_len);
+            let y = &batch[1].reshape((batch_len,)).unwrap().to_device(&device).unwrap();
+            let logits = model.forward(&x).unwrap();
+            println!("logits shape: {:?}", logits.shape());
+            println!("y shape: {:?}", y.shape());
+            let loss = candle_nn::loss::cross_entropy(&logits, y).unwrap();
+            optimizer.backward_step(&loss).unwrap();
+            let this_loss = loss.to_vec0::<f32>().unwrap();
+            sum_loss += this_loss;
             let batch_time_1 = std::time::Instant::now();
-            println!("batch time: {:?}", batch_time_1 - batch_time_0);
+            println!(
+                "batch: {:?}, loss: {:?}, batch time: {:?}",
+                i,
+                this_loss,
+                batch_time_1 - batch_time_0,
+            );
             batch_time_0 = batch_time_1;
+            pb.inc(1);
         }
+        let avg_loss = sum_loss / dataloader.len() as f32;
         let end_time = std::time::Instant::now();
         pb.finish_with_message("epoch done");
-        println!("epoch time: {:?}", end_time - start_time);
-        single_worker_dataloader.reset();
+        println!(
+            "epoch time: {:?} avg_loss: {:?}",
+            end_time - start_time,
+            avg_loss
+        );
+        dataloader.reset();
     }
 }
 
 fn main() {
-    multi_worker_benches();
-    single_worker_benches()
+    let args = TrainingArgs {
+        learning_rate: 1e-3,
+        batch_size: 32,
+        epochs: 10,
+    };
+    multi_worker_benches(&args);
+    //single_worker_benches()
 }
 //criterion_main!(benches);
