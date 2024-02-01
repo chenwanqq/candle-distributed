@@ -1,10 +1,55 @@
 use candle_core::Module;
 use candle_distributed::data_utils::dataset::Dataset;
-use candle_nn::{var_builder::SimpleBackend, Func, Optimizer, VarBuilder, VarMap};
-use candle_transformers::models::resnet;
-use criterion::criterion_main;
+use candle_nn::{Optimizer, VarBuilder, VarMap};
+use candle_transformers::models::repvgg;
 use indicatif::ProgressBar;
-use std::path::Path;
+
+#[derive(Clone, Copy, Debug)]
+enum Which {
+    A0,
+    A1,
+    A2,
+    B0,
+    B1,
+    B2,
+    B3,
+    B1G4,
+    B2G4,
+    B3G4,
+}
+
+impl Which {
+    fn model_filename(&self) -> String {
+        let name = match self {
+            Self::A0 => "a0",
+            Self::A1 => "a1",
+            Self::A2 => "a2",
+            Self::B0 => "b0",
+            Self::B1 => "b1",
+            Self::B2 => "b2",
+            Self::B3 => "b3",
+            Self::B1G4 => "b1g4",
+            Self::B2G4 => "b2g4",
+            Self::B3G4 => "b3g4",
+        };
+        format!("timm/repvgg_{}.rvgg_in1k", name)
+    }
+
+    fn config(&self) -> repvgg::Config {
+        match self {
+            Self::A0 => repvgg::Config::a0(),
+            Self::A1 => repvgg::Config::a1(),
+            Self::A2 => repvgg::Config::a2(),
+            Self::B0 => repvgg::Config::b0(),
+            Self::B1 => repvgg::Config::b1(),
+            Self::B2 => repvgg::Config::b2(),
+            Self::B3 => repvgg::Config::b3(),
+            Self::B1G4 => repvgg::Config::b1g4(),
+            Self::B2G4 => repvgg::Config::b2g4(),
+            Self::B3G4 => repvgg::Config::b3g4(),
+        }
+    }
+}
 
 //5 class, 1,2,3,4,5
 #[derive(Clone)]
@@ -37,7 +82,7 @@ impl CompCarDataset {
                 let label_content = std::fs::read_to_string(label_path).unwrap();
                 let label_str: String = label_content.lines().take(1).collect();
                 pb.inc(1);
-                label_str.parse::<u8>().unwrap()-1
+                label_str.parse::<u8>().unwrap() - 1
             })
             .collect();
         pb.finish_with_message("load label done");
@@ -146,16 +191,37 @@ fn single_worker_benches() {
     }
 }
 
-struct TrainingArgs {
+struct Args {
+    dataset_root: String,
+    gpu: bool,
     learning_rate: f64,
     batch_size: usize,
     epochs: usize,
+    which: Which,
 }
 
-fn multi_worker_benches(args: &TrainingArgs) {
-    let device = candle_core::Device::new_cuda(0).unwrap();
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            dataset_root: String::from("./datasets/compcars"),
+            gpu: true,
+            learning_rate: 1e-2,
+            batch_size: 64,
+            epochs: 10,
+            which: Which::A0,
+        }
+    }
+}
+
+fn multi_worker_benches(args: &Args) {
+    let device = if args.gpu {
+        candle_core::Device::new_cuda(0).unwrap()
+    } else {
+        candle_core::Device::Cpu
+    };
+
     //create dataset
-    let dataset_root = "./datasets/compcars".to_string();
+    let dataset_root = args.dataset_root.clone();
     let dataset = CompCarDataset::new(dataset_root, "train".to_string());
     println!("dataset len: {}", dataset.len());
     let mut dataloader = candle_distributed::data_utils::dataloader::DataLoader::new_multi_worker(
@@ -167,16 +233,21 @@ fn multi_worker_benches(args: &TrainingArgs) {
         8,
         Some(2),
     );
-    // create model
-    let weight_path = Path::new("./weights/resnet18.safetensors");
-    let mut weights = candle_core::safetensors::load(weight_path, &device).unwrap();
+
+    let weights_path = {
+        let model_name = args.which.model_filename();
+        let api = hf_hub::api::sync::Api::new().unwrap();
+        let api = api.model(model_name);
+        api.get("model.safetensors").unwrap()
+    };
+    let weights = candle_core::safetensors::load(weights_path, &device).unwrap();
     let mut varmap = VarMap::new();
     for (k, v) in weights.iter() {
-        varmap.set_one(k.to_string(), v);
+        let _ = varmap.set_one(k.to_string(), v);
     }
     let vb = VarBuilder::from_varmap(&varmap, candle_core::DType::F32, &device);
-    let model = resnet::resnet18(5, vb).unwrap();
-
+    let model = repvgg::repvgg(&args.which.config(), 5, vb).unwrap();
+    
     // create optimizer
     let adamw_params = candle_nn::ParamsAdamW {
         lr: args.learning_rate,
@@ -192,23 +263,34 @@ fn multi_worker_benches(args: &TrainingArgs) {
         let mut batch_time_0 = std::time::Instant::now();
         let mut sum_loss = 0f32;
         for (i, batch) in dataloader.by_ref().enumerate() {
-            let x = &batch[0].permute((0, 3, 1, 2)).unwrap().to_device(&device).unwrap();
+            let x = &batch[0]
+                .permute((0, 3, 1, 2))
+                .unwrap()
+                .to_device(&device)
+                .unwrap();
             let batch_len = x.shape().dims()[0];
             println!("batch len: {}", batch_len);
-            let y = &batch[1].reshape((batch_len,)).unwrap().to_device(&device).unwrap();
+            let y = &batch[1]
+                .reshape((batch_len,))
+                .unwrap()
+                .to_device(&device)
+                .unwrap();
+            let calculate_time_0 = std::time::Instant::now();
             let logits = model.forward(&x).unwrap();
             println!("logits shape: {:?}", logits.shape());
             println!("y shape: {:?}", y.shape());
             let loss = candle_nn::loss::cross_entropy(&logits, y).unwrap();
             optimizer.backward_step(&loss).unwrap();
-            let this_loss = loss.to_vec0::<f32>().unwrap();
+            let this_loss = loss.to_vec0::<f32>().unwrap() / batch_len as f32;
             sum_loss += this_loss;
             let batch_time_1 = std::time::Instant::now();
             println!(
-                "batch: {:?}, loss: {:?}, batch time: {:?}",
+                "batch: {:?}, loss: {:?}, batch time: {:?}, load time: {:?},calculate time: {:?}",
                 i,
                 this_loss,
                 batch_time_1 - batch_time_0,
+                calculate_time_0 - batch_time_0,
+                batch_time_1 - calculate_time_0,
             );
             batch_time_0 = batch_time_1;
             pb.inc(1);
@@ -226,11 +308,7 @@ fn multi_worker_benches(args: &TrainingArgs) {
 }
 
 fn main() {
-    let args = TrainingArgs {
-        learning_rate: 1e-3,
-        batch_size: 32,
-        epochs: 10,
-    };
+    let args = Args::default();
     multi_worker_benches(&args);
     //single_worker_benches()
 }
